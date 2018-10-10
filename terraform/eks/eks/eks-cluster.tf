@@ -6,8 +6,8 @@
 #  * kubectl config
 #  * config map to map node iam to k8s RBAC
 
-resource "aws_iam_role" "eks-test-cluster" {
-  name = "eks-test-cluster"
+resource "aws_iam_role" "eks_cluster" {
+  name = "${var.cluster_name}"
 
   assume_role_policy = <<POLICY
 {
@@ -25,20 +25,20 @@ resource "aws_iam_role" "eks-test-cluster" {
 POLICY
 }
 
-resource "aws_iam_role_policy_attachment" "eks-test-cluster-AmazonEKSClusterPolicy" {
+resource "aws_iam_role_policy_attachment" "eks_cluster_AmazonEKSClusterPolicy" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
-  role       = "${aws_iam_role.eks-test-cluster.name}"
+  role       = "${aws_iam_role.eks_cluster.name}"
 }
 
-resource "aws_iam_role_policy_attachment" "eks-test-cluster-AmazonEKSServicePolicy" {
+resource "aws_iam_role_policy_attachment" "eks_cluster_AmazonEKSServicePolicy" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSServicePolicy"
-  role       = "${aws_iam_role.eks-test-cluster.name}"
+  role       = "${aws_iam_role.eks_cluster.name}"
 }
 
-resource "aws_security_group" "eks-test-cluster" {
-  name        = "eks-test-cluster"
-  description = "Cluster communication with worker nodes"
-  vpc_id      = "${aws_vpc.eks-test.id}"
+resource "aws_security_group" "eks_cluster" {
+  name        = "${var.cluster_name}-cluster"
+  description = "EKS cluster ${var.cluster_name} communication with worker nodes"
+  vpc_id      = "${var.cluster_vpc_id}"
 
   egress {
     from_port   = 0
@@ -48,32 +48,32 @@ resource "aws_security_group" "eks-test-cluster" {
   }
 
   tags {
-    Name = "eks-demo"
+    Name = "${var.cluster_name}"
   }
 }
 
-resource "aws_security_group_rule" "eks-test-cluster-ingress-node-https" {
+resource "aws_security_group_rule" "eks_cluster_ingress_node_https" {
   description              = "Allow pods to communicate with the cluster API Server"
   from_port                = 443
   protocol                 = "tcp"
-  security_group_id        = "${aws_security_group.eks-test-cluster.id}"
-  source_security_group_id = "${aws_security_group.eks-test-node.id}"
+  security_group_id        = "${aws_security_group.eks_cluster.id}"
+  source_security_group_id = "${aws_security_group.eks_nodes.id}"
   to_port                  = 443
   type                     = "ingress"
 }
 
-resource "aws_eks_cluster" "eks-test" {
-  name     = "${var.cluster-name}"
-  role_arn = "${aws_iam_role.eks-test-cluster.arn}"
+resource "aws_eks_cluster" "eks_cluster" {
+  name     = "${var.cluster_name}"
+  role_arn = "${aws_iam_role.eks_cluster.arn}"
 
   vpc_config {
-    security_group_ids = ["${aws_security_group.eks-test-cluster.id}"]
-    subnet_ids         = ["${aws_subnet.eks-test.*.id}"]
+    security_group_ids = ["${aws_security_group.eks_cluster.id}"]
+    subnet_ids         = ["${var.cluster_subnets_ids}"]
   }
 
   depends_on = [
-    "aws_iam_role_policy_attachment.eks-test-cluster-AmazonEKSClusterPolicy",
-    "aws_iam_role_policy_attachment.eks-test-cluster-AmazonEKSServicePolicy",
+    "aws_iam_role_policy_attachment.eks_cluster_AmazonEKSClusterPolicy",
+    "aws_iam_role_policy_attachment.eks_cluster_AmazonEKSServicePolicy",
   ]
 }
 
@@ -88,12 +88,12 @@ metadata:
   namespace: kube-system
 data:
   mapRoles: |
-    - rolearn: ${aws_iam_role.eks-test-node.arn}
+    - rolearn: ${aws_iam_role.eks_node.arn}
       username: system:node:{{EC2PrivateDNSName}}
       groups:
         - system:bootstrappers
         - system:nodes
-    - rolearn: ${aws_iam_role.eks-test-node-kiam-server.arn}
+    - rolearn: ${aws_iam_role.eks_node_kiam_server.arn}
       username: system:node:{{EC2PrivateDNSName}}
       groups:
         - system:bootstrappers
@@ -106,8 +106,8 @@ CONFIGMAPAWSAUTH
 apiVersion: v1
 clusters:
 - cluster:
-    server: ${aws_eks_cluster.eks-test.endpoint}
-    certificate-authority-data: ${aws_eks_cluster.eks-test.certificate_authority.0.data}
+    server: ${aws_eks_cluster.eks_cluster.endpoint}
+    certificate-authority-data: ${aws_eks_cluster.eks_cluster.certificate_authority.0.data}
   name: kubernetes
 contexts:
 - context:
@@ -126,18 +126,22 @@ users:
       args:
         - "token"
         - "-i"
-        - "${var.cluster-name}"
+        - "${var.cluster_name}"
       env:
         - name: AWS_PROFILE
           value: "seligerit"
 KUBECONFIG
 }
 
+resource "local_file" "kubectl_config" {
+    content     = "${local.kubeconfig}"
+    filename = "yaml/kubectl-config.yaml"
+}
 
-resource "local_file" "config-map-aws-auth" {
+resource "local_file" "config_map_aws_auth" {
     content     = "${local.config_map_aws_auth}"
     filename = "yaml/config-map-aws-auth.yaml"
-    depends_on = ["local_file.kubectl-config"]
+    depends_on = ["local_file.kubectl_config"]
 
   provisioner "local-exec" {
     command = "kubectl --kubeconfig=yaml/kubectl-config.yaml apply -f yaml/config-map-aws-auth.yaml"
