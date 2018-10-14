@@ -18,66 +18,35 @@ data "aws_iam_policy_document" "eks_node" {
   }
 }
 
-# These are AWS provides policies that will be attached to the EKS nodes
-locals {
-  EKSPolicies = [
-    "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy", 
-    "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy",
-    "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
-  ]
-}
-
-# This is the role a normal EKS worker node
+# Assume role policy
 resource "aws_iam_role" "eks_node" {
-  name = "${var.cluster_name}-node"
+  count = "${length(var.worker_groups)}"
+  name = "${var.cluster_name}-node-${lookup(var.worker_groups[count.index], "node_type")}"
   assume_role_policy = "${data.aws_iam_policy_document.eks_node.json}"
 }
 
-resource "aws_iam_role_policy_attachment" "eks_node_EKSPolicies" {
-  count = 3
-  policy_arn = "${element(local.EKSPolicies, count.index)}"
-  role       = "${aws_iam_role.eks_node.name}"
+resource "aws_iam_role_policy_attachment" "eks_node_AmazonEKSWorkerNodePolicy" {
+  count = "${length(var.worker_groups)}"
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+  role = "${aws_iam_role.eks_node.*.name[count.index]}"
 }
 
-# This is the role for our EKS nodes which host kiam and therefore need
-# extended IAM permissions
-resource "aws_iam_role" "eks_node_kiam_server" {
-  name = "${var.cluster_name}-node-kiam-server"
-  assume_role_policy = "${data.aws_iam_policy_document.eks_node.json}"
+resource "aws_iam_role_policy_attachment" "eks_node_AmazonEKS_CNI_Policy" {
+  count = "${length(var.worker_groups)}"
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
+  role = "${aws_iam_role.eks_node.*.name[count.index]}"
 }
 
-resource "aws_iam_role_policy_attachment" "eks_node_kiam_server_EKSPolicies" {
-  count = 3
-  policy_arn = "${element(local.EKSPolicies, count.index)}"
-  role       = "${aws_iam_role.eks_node_kiam_server.name}"
+resource "aws_iam_role_policy_attachment" "eks_node_AmazonEC2ContainerRegistryReadOnly" {
+  count = "${length(var.worker_groups)}"
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+  role = "${aws_iam_role.eks_node.*.name[count.index]}"
 }
-
-data "aws_iam_policy_document" "eks_kiam_server" {
-  statement {
-    actions = ["sts:AssumeRole"]
-    resources = ["arn:aws:iam::059300324029:role/kiam-server"]
-  }
-}
-
-resource "aws_iam_policy" "eks_kiam_server" {
-  name = "${var.cluster_name}-kiam-server"
-  policy = "${data.aws_iam_policy_document.eks_kiam_server.json}"
-}
-
-resource "aws_iam_role_policy_attachment" "eks_kiam_server" {
-  policy_arn = "${aws_iam_policy.eks_kiam_server.arn}"
-  role = "${aws_iam_role.eks_node_kiam_server.name}"
-}
-
 
 resource "aws_iam_instance_profile" "eks_node" {
-  name = "${var.cluster_name}-node"
-  role = "${aws_iam_role.eks_node.name}"
-}
-
-resource "aws_iam_instance_profile" "eks_node_kiam_server" {
-  name = "${var.cluster_name}-node-kiam-server"
-  role = "${aws_iam_role.eks_node_kiam_server.name}"
+  count = "${length(var.worker_groups)}"
+  name = "${var.cluster_name}-node-${lookup(var.worker_groups[count.index], "node_type")}"
+  role = "${aws_iam_role.eks_node.*.name[count.index]}"
 }
 
 resource "aws_security_group" "eks_nodes" {
@@ -145,37 +114,29 @@ data "aws_ami" "eks_worker" {
 # We utilize a Terraform local here to simplify Base64 encoding this
 # information into the AutoScaling Launch Configuration.
 # More information: https://docs.aws.amazon.com/eks/latest/userguide/launch-workers.html
-locals {
-  eks_node_worker_userdata = <<USERDATA
-#!/bin/bash
-set -o xtrace
-/etc/eks/bootstrap.sh \
-  --apiserver-endpoint '${aws_eks_cluster.eks_cluster.endpoint}' \
-  --b64-cluster-ca '${aws_eks_cluster.eks_cluster.certificate_authority.0.data}' \
-  --kubelet-extra-args '--node-labels=kiam=agent' \
-  '${var.cluster_name}'
-USERDATA
-  eks_node_kiam_server_userdata = <<USERDATA
-#!/bin/bash
-set -o xtrace
-/etc/eks/bootstrap.sh \
-  --apiserver-endpoint '${aws_eks_cluster.eks_cluster.endpoint}' \
-  --b64-cluster-ca '${aws_eks_cluster.eks_cluster.certificate_authority.0.data}' \
-  --kubelet-extra-args '--node-labels=kiam=server' \
-  '${var.cluster_name}'
-USERDATA
+
+data "template_file" "bootstrap" {
+  count = "${length(var.worker_groups)}"
+  template = "${file("${path.module}/templates/userdata.sh.tpl")}"
+  vars {
+    cluster_endpoint = "${aws_eks_cluster.eks_cluster.endpoint}"
+    cluster_auth_base64 = "${aws_eks_cluster.eks_cluster.certificate_authority.0.data}"
+    kubelet_extra_args = "${lookup(var.worker_groups[count.index], "kubelet_extra_args", "")}"
+    cluster_name = "${var.cluster_name}"
+  }
 }
 
 # KNOWHOW: To label nodes differently, you can use two launch configurations. Possibly there is
 #  a more elegant way to do this in terraform?
-resource "aws_launch_configuration" "eks_node_worker" {
+resource "aws_launch_configuration" "eks_node" {
+  count = "${length(var.worker_groups)}"
   associate_public_ip_address = true
-  iam_instance_profile        = "${aws_iam_instance_profile.eks_node.name}"
+  iam_instance_profile        = "${aws_iam_instance_profile.eks_node.*.name[count.index]}"
   image_id                    = "${data.aws_ami.eks_worker.id}"
   instance_type               = "m4.large"
-  name_prefix                 = "${var.cluster_name}-worker"
+  name_prefix                 = "${var.cluster_name}-node-${lookup(var.worker_groups[count.index], "node_type")}"
   security_groups             = ["${aws_security_group.eks_nodes.id}"]
-  user_data_base64            = "${base64encode(local.eks_node_worker_userdata)}"
+  user_data_base64            = "${base64encode(data.template_file.bootstrap.*.rendered[count.index])}"
   key_name                    = "${var.ssh_admin_key_name}"
 
   lifecycle {
@@ -183,48 +144,13 @@ resource "aws_launch_configuration" "eks_node_worker" {
   }
 }
 
-resource "aws_launch_configuration" "eks_node_kiam_server" {
-  associate_public_ip_address = true
-  iam_instance_profile        = "${aws_iam_instance_profile.eks_node_kiam_server.name}"
-  image_id                    = "${data.aws_ami.eks_worker.id}"
-  instance_type               = "m4.large"
-  name_prefix                 = "${var.cluster_name}-kiam-server"
-  security_groups             = ["${aws_security_group.eks_nodes.id}"]
-  user_data_base64            = "${base64encode(local.eks_node_kiam_server_userdata)}"
-  key_name                    = "${var.ssh_admin_key_name}"
-
-  lifecycle {
-    create_before_destroy = true
-  }
-}
-
-resource "aws_autoscaling_group" "eks_nodes_worker" {
-  desired_capacity     = 1
-  launch_configuration = "${aws_launch_configuration.eks_node_worker.id}"
-  max_size             = 2
-  min_size             = 1
-  name                 = "${var.cluster_name}-nodes-worker"
-  vpc_zone_identifier  = ["${var.cluster_subnets_ids}"]
-
-  tag {
-    key                 = "Name"
-    value               = "${var.cluster_name}"
-    propagate_at_launch = true
-  }
-
-  tag {
-    key                 = "kubernetes.io/cluster/${var.cluster_name}"
-    value               = "owned"
-    propagate_at_launch = true
-  }
-}
-
-resource "aws_autoscaling_group" "eks_nodes_kiam_server" {
-  desired_capacity     = 1
-  launch_configuration = "${aws_launch_configuration.eks_node_kiam_server.id}"
-  max_size             = 2
-  min_size             = 1
-  name                 = "${var.cluster_name}-nodes-kiam-server"
+resource "aws_autoscaling_group" "eks_nodes" {
+  count = "${length(var.worker_groups)}"
+  desired_capacity     = "${lookup(var.worker_groups[count.index], "desired_capacity")}"
+  launch_configuration = "${aws_launch_configuration.eks_node.*.id[count.index]}"
+  max_size             = "${lookup(var.worker_groups[count.index], "max_size")}"
+  min_size             = "${lookup(var.worker_groups[count.index], "min_size")}"
+  name                 = "${var.cluster_name}-node-${lookup(var.worker_groups[count.index], "node_type")}"
   vpc_zone_identifier  = ["${var.cluster_subnets_ids}"]
 
   tag {
