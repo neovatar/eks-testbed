@@ -1,9 +1,5 @@
 #
-# The below is an IAM role and policy to allow the EKS service to manage or retrieve data from other AWS services
-#
-# Before you can create an Amazon EKS cluster, you must create an IAM role that Kubernetes can assume to create AWS resources.
-# For example, when a load balancer is created, Kubernetes assumes the role to create an Elastic Load Balancing load balancer in your account.
-# This only needs to be done one time and can be used for multiple EKS clusters.
+# IAM role and policy to allow the EKS service to manage or retrieve data from other AWS services
 #
 resource "aws_iam_role" "eks_cluster" {
   name = "${var.cluster_name}"

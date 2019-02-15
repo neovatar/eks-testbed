@@ -25,7 +25,7 @@ module "eks_worker_default" {
   worker_group_name = "default"
   aws_profile = "${var.aws_profile}"
   eks_cluster_id = "${module.eks.eks_cluster_id}"
-  cluster_subnets_ids = "${data.aws_subnet_ids.subnet_ids.ids}"
+  cluster_subnets_ids = "${module.vpc.subnet_ids}"
   instance_type = "m5.large"
   aws_eks_ami_id = "ami-05e062a123092066a"
   min_size = 1

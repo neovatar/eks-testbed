@@ -14,6 +14,6 @@ module "eks" {
   aws_profile = "${var.aws_profile}"
   cluster_name = "${local.eks_cluster_fullname}"
   cluster_vpc_id = "${module.vpc.vpc_id}"
-  cluster_subnets_ids = "${data.aws_subnet_ids.subnet_ids.ids}"
+  cluster_subnets_ids = "${module.vpc.subnet_ids}"
   worker_groups = ["default"]
 }
