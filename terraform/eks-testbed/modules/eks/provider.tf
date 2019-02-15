@@ -1,0 +1,2 @@
+provider "template" {}
+provider "local" {}

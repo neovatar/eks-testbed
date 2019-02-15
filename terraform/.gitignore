@@ -1,2 +1,5 @@
 .terraform
 *.tfstate.backup
+*.tfstate
+config.tfvars
+backend-config.tfvars
