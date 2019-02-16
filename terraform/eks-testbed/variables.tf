@@ -18,7 +18,7 @@ variable "dns_route53_hosted_domain" {
   type = "string"
 }
 
-variable "ssh_admin_pubkey" {
+variable "ssh_admin_pubkey_path" {
   type = "string"
 }
 

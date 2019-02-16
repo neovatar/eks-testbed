@@ -11,3 +11,11 @@ This terraform project does the following:
   you need to add it to your git repository. Since the terraform statefile can
   contain information that your organisation may consider secret, it is a good
   idea to encrypt the statefile before you commit it to git (e.g. with git-crypt)
+
+## terraform init
+
+## terraform apply
+
+To only create `backend-config.tfvar` run:
+
+`terraform apply -var-file ../config.tfvars -target=local_file.backend_config`
